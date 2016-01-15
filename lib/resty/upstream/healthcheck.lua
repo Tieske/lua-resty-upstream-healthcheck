@@ -18,6 +18,9 @@ local ceil = math.ceil
 local spawn = ngx.thread.spawn
 local wait = ngx.thread.wait
 local pcall = pcall
+local upstream
+local new_tab
+local ok
 
 local _M = {
     _VERSION = '0.03'
@@ -30,12 +33,12 @@ then
     error("ngx_lua 0.9.5+ required")
 end
 
-local ok, upstream = pcall(require, "ngx.upstream")
+ok, upstream = pcall(require, "ngx.upstream")
 if not ok then
     error("ngx_upstream_lua module required")
 end
 
-local ok, new_tab = pcall(require, "table.new")
+ok, new_tab = pcall(require, "table.new")
 if not ok or type(new_tab) ~= "function" then
     new_tab = function (narr, nrec) return {} end
 end
@@ -74,7 +77,9 @@ end
 local function set_peer_down_globally(ctx, is_backup, id, value)
     local u = ctx.upstream
     local dict = ctx.dict
-    local ok, err = set_peer_down(u, is_backup, id, value)
+    local ok, err
+    
+    ok, err = set_peer_down(u, is_backup, id, value)
     if not ok then
         errlog("failed to set peer down: ", err)
     end
@@ -84,7 +89,7 @@ local function set_peer_down_globally(ctx, is_backup, id, value)
     end
 
     local key = gen_peer_key("d:", u, is_backup, id)
-    local ok, err = dict:set(key, value)
+    ok, err = dict:set(key, value)
     if not ok then
         errlog("failed to set peer down state: ", err)
     end
@@ -207,12 +212,12 @@ local report_error = function(sock, ctx, is_backup, id, peer, ...)
 end
 
 local function check_peer(ctx, id, peer, is_backup)
-    local ok, err
+    local ok, err, sock, bytes, status_line
     local name = peer.name
     local statuses = ctx.statuses
     local req = ctx.http_req
 
-    local sock, err = stream_sock()
+    sock, err = stream_sock()
     if not sock then
         errlog("failed to create stream socket: ", err)
         return
@@ -230,13 +235,13 @@ local function check_peer(ctx, id, peer, is_backup)
                             "failed to connect to ", name, ": ", err)
     end
     
-    local bytes, err = sock:send(req)
+    bytes, err = sock:send(req)
     if not bytes then
         return report_error(sock, ctx, is_backup, id, peer, 
                             "failed to send request to ", name, ": ", err)
     end
     
-    local status_line, err = sock:receive()
+    status_line, err = sock:receive()
     if not status_line then
         return report_error(sock, ctx, is_backup, id, peer, 
                             "failed to receive status line from ", name,
@@ -460,16 +465,18 @@ end
 
 local check
 check = function (premature, ctx)
+    local ok, err
+    
     if premature then
         return
     end
 
-    local ok, err = pcall(do_check, ctx)
+    ok, err = pcall(do_check, ctx)
     if not ok then
         errlog("failed to run healthcheck cycle: ", err)
     end
 
-    local ok, err = new_timer(ctx.interval, check, ctx)
+    ok, err = new_timer(ctx.interval, check, ctx)
     if not ok then
         if err ~= "process exiting" then
             errlog("failed to create timer: ", err)
@@ -495,6 +502,8 @@ local function preprocess_peers(peers)
 end
 
 function _M.spawn_checker(opts)
+    local ppeers, bpeers, ok, err
+    
     local typ = opts.type
     if not typ then
         return nil, "\"type\" option required"
@@ -567,12 +576,12 @@ function _M.spawn_checker(opts)
         return nil, "no upstream specified"
     end
 
-    local ppeers, err = get_primary_peers(u)
+    ppeers, err = get_primary_peers(u)
     if not ppeers then
         return nil, "failed to get primary peers: " .. err
     end
 
-    local bpeers, err = get_backup_peers(u)
+    bpeers, err = get_backup_peers(u)
     if not bpeers then
         return nil, "failed to get backup peers: " .. err
     end
@@ -592,7 +601,7 @@ function _M.spawn_checker(opts)
         concurrency = concur,
     }
 
-    local ok, err = new_timer(0, check, ctx)
+    ok, err = new_timer(0, check, ctx)
     if not ok then
         return nil, "failed to create timer: " .. err
     end
